@@ -1,0 +1,70 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: .docker/local/go/Dockerfile
+    container_name: "shintage-api-server"
+    stdin_open: true
+    tty: true
+    ports:
+      - "8080:8080"
+    volumes:
+      - "./:/app"
+
+  mysql:
+    build:
+      context: .
+      dockerfile: ".docker/local/mysql/Dockerfile"
+    container_name: "shintage-api-server-mysql"
+    platform: linux/x86_64
+    ports:
+      - 3306:3306
+    environment:
+      MYSQL_DATABASE: $DB_DATABASE
+      MYSQL_USER: $DB_USERNAME
+      MYSQL_PASSWORD: $DB_PASSWORD
+      MYSQL_ROOT_PASSWORD: $DB_ROOT_PASSWORD
+    volumes:
+      - ".docker/local/mysql/my.cnf:/etc/mysql/my.cnf"
+      - ".mysql:/var/lib/mysql"
+
+  redis:
+    image: redis:6.2-buster
+    container_name: shintage-api-server-redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - .redis-data:/data
+
+  minio:
+    image: minio/minio
+    container_name: shintage-api-server-minio
+    ports:
+      - '9001:9001'
+      - '9002:9002'
+    environment:
+      MINIO_ROOT_USER: access_key
+      MINIO_ROOT_PASSWORD: secret_key
+    entrypoint: bash
+    command: -c "/opt/bin/minio server /export --address :9001 --console-address :9002"
+
+  create-bucket:
+    container_name: shintage-api-server-create-bucket
+    image: minio/mc
+    entrypoint: [ '' ]
+    command:
+      - /bin/sh
+      - -c
+      - |
+        until (mc config host add minio http://minio:9001 access_key secret_key) do echo 'wait until add host' && sleep 1; done;
+        mc mb minio/public
+        mc policy set public minio/public
+        mc mb minio/private
+        mc policy set private minio/private
+    environment:
+      MINIO_ROOT_USER: access_key
+      MINIO_ROOT_PASSWORD: secret_key
+    depends_on:
+      - minio
