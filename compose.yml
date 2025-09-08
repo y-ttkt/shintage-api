@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: .docker/local/go/Dockerfile
-    container_name: "shintage-api-server"
+    container_name: shintage-api-server
     stdin_open: true
     tty: true
     ports:
@@ -17,10 +17,10 @@ services:
     build:
       context: .
       dockerfile: ".docker/local/mysql/Dockerfile"
-    container_name: "shintage-api-server-mysql"
+    container_name: shintage-api-server-mysql
     platform: linux/x86_64
     ports:
-      - 3306:3306
+      - "3306:3306"
     environment:
       MYSQL_DATABASE: $DB_DATABASE
       MYSQL_USER: $DB_USERNAME
@@ -34,37 +34,41 @@ services:
     image: redis:6.2-buster
     container_name: shintage-api-server-redis
     ports:
-      - '6379:6379'
+      - "6379:6379"
     volumes:
       - .redis-data:/data
 
   minio:
-    image: minio/minio
+    image: minio/minio:latest
     container_name: shintage-api-server-minio
-    ports:
-      - '9001:9001'
-      - '9002:9002'
+    command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: access_key
       MINIO_ROOT_PASSWORD: secret_key
-    entrypoint: bash
-    command: -c "/opt/bin/minio server /export --address :9001 --console-address :9002"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - .minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   create-bucket:
+    image: minio/mc:latest
     container_name: shintage-api-server-create-bucket
-    image: minio/mc
-    entrypoint: [ '' ]
-    command:
-      - /bin/sh
-      - -c
-      - |
-        until (mc config host add minio http://minio:9001 access_key secret_key) do echo 'wait until add host' && sleep 1; done;
-        mc mb minio/public
-        mc policy set public minio/public
-        mc mb minio/private
-        mc policy set private minio/private
-    environment:
-      MINIO_ROOT_USER: access_key
-      MINIO_ROOT_PASSWORD: secret_key
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      mc alias set minio http://minio:9000 access_key secret_key
+      mc mb -p minio/public  || true
+      mc mb -p minio/private || true
+      # ポリシー設定（mcのバージョンによりコマンドが異なる）
+      # 旧: mc policy set public minio/public
+      # 新: 匿名ダウンロード許可
+      mc anonymous set download minio/public
+      mc anonymous set none     minio/private
